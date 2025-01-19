@@ -68,7 +68,6 @@ export default function ChatInterface({
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [isNewChat, setIsNewChat] = useState(initialMessages.length === 0)
   const [isExpanded, setIsExpanded] = useState(false)
-  const [currentModel, setCurrentModel] = useState("Llama 3.3 70B")
   const [error, setError] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const prevMessagesRef = useRef<Message[]>(initialMessages)
@@ -285,7 +284,7 @@ export default function ChatInterface({
         <div className="text-sm text-gray-600 mb-4 flex items-center gap-2">
           <div className="flex items-center space-x-2">
             <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-            <span>{currentModel}</span>
+            <span>Llama 3.3 70B</span>
           </div>
         </div>
 
