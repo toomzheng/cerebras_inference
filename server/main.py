@@ -137,16 +137,19 @@ load_dotenv()
 
 app = FastAPI()
 
-# Add CORS middleware
+# Get allowed origins from environment variable or use default
+allowed_origins = os.environ.get("CORS_ORIGINS", "http://localhost:3000,https://cerebrasinference-production.up.railway.app")
+allowed_origins = [origin.strip() for origin in allowed_origins.split(",")]
+
+# Add CORS middleware with more permissive settings for development
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",  # Local development
-        "https://cerebrasinference-production.up.railway.app/"  # Railway production URL
-    ],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
+    max_age=3600,
 )
 
 # Initialize Cerebras client
