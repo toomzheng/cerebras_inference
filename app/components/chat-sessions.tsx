@@ -33,7 +33,7 @@ export function ChatSessions({
       <div className="p-4 border-b border-gray-200">
         <Button
           onClick={onNewSession}
-          className="w-full justify-start"
+          className="w-full justify-start transition-colors duration-200 hover:bg-gray-200/80"
           variant="outline"
         >
           <MessageSquare className="mr-2 h-4 w-4" />
@@ -46,7 +46,11 @@ export function ChatSessions({
             key={session.id}
             onClick={() => onSessionSelect(session.id)}
             variant={currentSessionId === session.id ? "secondary" : "ghost"}
-            className="w-full justify-start text-left"
+            className={`w-full justify-start text-left transition-colors duration-200 ${
+              currentSessionId === session.id 
+                ? 'bg-gray-200/80 hover:bg-gray-200/90' 
+                : 'hover:bg-gray-200/50 active:bg-gray-300/50'
+            }`}
           >
             <div className="flex items-start space-x-2 overflow-hidden">
               <MessageSquare className="h-4 w-4 mt-1 flex-shrink-0" />
