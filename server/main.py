@@ -13,6 +13,7 @@ import re
 import tiktoken
 import numpy as np
 from dataclasses import dataclass
+import uuid
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -51,7 +52,7 @@ def create_chunks_with_overlap(sentences: List[str], max_tokens: int = 4000, ove
             chunk_text = " ".join(current_chunk)
             chunks.append(TextChunk(text=chunk_text, token_count=current_token_count))
             
-            # Start new chunk with more overlap for better context
+            # Start new chunk with overlap for better context
             overlap_start = max(0, len(current_chunk) - overlap_sentences)
             current_chunk = current_chunk[overlap_start:]
             current_token_count = count_tokens(" ".join(current_chunk))
@@ -99,73 +100,35 @@ def calculate_chunk_score(query_words: List[str], chunk_words: List[str]) -> flo
     
     relevance_score = sum(chunk_freq[word] for word in matching_words) / len(chunk_words)
     
-    # Find earliest position of matching words
-    first_positions = []
-    for word in matching_words:
-        try:
-            pos = chunk_words.index(word)
-            first_positions.append(pos)
-        except ValueError:
-            continue
-    
-    position_score = 1.0
-    if first_positions:
-        # Earlier positions get higher scores
-        min_pos = min(first_positions)
-        position_score = 1.0 / (1.0 + min_pos / 100)
-    
-    # Combine scores with weights
-    final_score = (0.4 * coverage_score + 
-                  0.4 * relevance_score + 
-                  0.2 * position_score)
-    
-    return final_score
+    return (coverage_score + relevance_score) / 2
 
 def find_relevant_chunks(query: str, chunks: List[TextChunk], max_total_tokens: int = 7000) -> List[TextChunk]:
     """Find the most relevant chunks that fit within the token limit."""
+    if not chunks:
+        return []
+    
     # Preprocess query and chunks
     query_words = preprocess_text(query)
-    logger.info(f"Preprocessed query words: {query_words}")
+    chunk_words = [preprocess_text(chunk.text) for chunk in chunks]
     
-    scored_chunks = []
+    # Calculate scores for each chunk
+    scores = [calculate_chunk_score(query_words, words) for words in chunk_words]
     
-    for i, chunk in enumerate(chunks):
-        chunk_words = preprocess_text(chunk.text)
-        score = calculate_chunk_score(query_words, chunk_words)
-        logger.info(f"Chunk {i} score: {score:.4f} (words: {len(chunk_words)})")
-        scored_chunks.append((score, chunk))
-    
-    # Sort by score
+    # Sort chunks by score
+    scored_chunks = list(zip(scores, chunks))
     scored_chunks.sort(key=lambda x: x[0], reverse=True)
-    logger.info(f"Top scores: {[f'{score:.4f}' for score, _ in scored_chunks[:3]]}")
     
-    # Select chunks that fit within the token limit
+    # Select chunks until we hit the token limit
     selected_chunks = []
     total_tokens = 0
-    min_score_threshold = 0.01  # Much lower threshold to include more context
     
-    # First pass: include highly relevant chunks
     for score, chunk in scored_chunks:
-        if score >= 0.1 and total_tokens + chunk.token_count <= max_total_tokens:
-            selected_chunks.append(chunk)
-            total_tokens += chunk.token_count
-            logger.info(f"Selected high-relevance chunk with score {score:.4f}, tokens: {chunk.token_count}, total tokens: {total_tokens}")
-    
-    # Second pass: include surrounding context with lower relevance
-    for score, chunk in scored_chunks:
-        if score >= min_score_threshold and chunk not in selected_chunks:
-            if total_tokens + chunk.token_count <= max_total_tokens:
-                selected_chunks.append(chunk)
-                total_tokens += chunk.token_count
-                logger.info(f"Selected context chunk with score {score:.4f}, tokens: {chunk.token_count}, total tokens: {total_tokens}")
-            else:
-                logger.info(f"Stopping chunk selection at {total_tokens} tokens")
-                break
-    
-    if not selected_chunks:
-        logger.info("No chunks selected, using first two chunks")
-        # Take first two chunks or all if less than two
-        return chunks[:min(2, len(chunks))]
+        if score == 0:  # Skip irrelevant chunks
+            continue
+        if total_tokens + chunk.token_count > max_total_tokens:
+            break
+        selected_chunks.append(chunk)
+        total_tokens += chunk.token_count
     
     return selected_chunks
 
@@ -200,8 +163,9 @@ app.add_middleware(
 pdf_contents: Dict[str, List[TextChunk]] = {}
 
 class PromptRequest(BaseModel):
-    session_id: str
+    session_id: Optional[str] = None
     prompt: str
+    mode: str = "chat"  # "chat" or "pdf"
 
 class Message(BaseModel):
     role: str
@@ -228,8 +192,8 @@ async def upload_pdf(file: UploadFile) -> Dict[str, str]:
         
         logger.info(f"Extracted text length: {len(text)} characters")
         
-        # Generate a session ID (in production, use a more secure method)
-        session_id = file.filename.replace('.pdf', '')
+        # Generate a session ID
+        session_id = str(uuid.uuid4())
         
         # Process the text into chunks
         sentences = split_into_sentences(text)
@@ -256,40 +220,55 @@ async def upload_pdf(file: UploadFile) -> Dict[str, str]:
         logger.error(f"Error processing PDF: {str(e)}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/create-session")
+async def create_session() -> Dict[str, str]:
+    try:
+        session_id = str(uuid.uuid4())
+        return {
+            "status": "success",
+            "session_id": session_id
+        }
+    except Exception as e:
+        logger.error(f"Error creating session: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/chat")
 async def chat(request: PromptRequest) -> Dict[str, str]:
-    logger.info(f"Received chat request for session: {request.session_id}")
+    logger.info(f"Received chat request for mode: {request.mode}")
     logger.info(f"Question: {request.prompt}")
     
-    if request.session_id not in pdf_contents:
-        logger.error(f"Session not found: {request.session_id}")
-        raise HTTPException(status_code=404, detail="Session not found")
-    
     try:
-        # Get the chunks for this session
-        chunks = pdf_contents[request.session_id]
-        logger.info(f"Found {len(chunks)} chunks for session {request.session_id}")
+        # Set up the messages list
+        messages = []
         
-        # Find relevant chunks that fit within our token budget
-        relevant_chunks = find_relevant_chunks(request.prompt, chunks)
-        logger.info(f"Found {len(relevant_chunks)} relevant chunks")
-        
-        if not relevant_chunks:
-            logger.error("No relevant chunks found!")
-            return {"response": "I couldn't find any relevant information in the document to answer your question. Could you please rephrase your question or ask about a different topic?"}
-        
-        # Log the first relevant chunk for debugging
-        if relevant_chunks:
-            logger.info(f"First relevant chunk ({relevant_chunks[0].token_count} tokens): {relevant_chunks[0].text[:200]}")
-        
-        combined_text = "\n\n".join(chunk.text for chunk in relevant_chunks)
-        total_tokens = sum(chunk.token_count for chunk in relevant_chunks)
-        logger.info(f"Selected {len(relevant_chunks)} relevant chunks, total tokens: {total_tokens}")
-        
-        # Construct a detailed system message with formatting instructions
-        system_message = {
-            "role": "system",
-            "content": """You are an AI assistant that provides well-structured, comprehensive answers about PDF documents. Follow these formatting guidelines:
+        # Add system message based on mode
+        if request.mode == "pdf":
+            if not request.session_id or request.session_id not in pdf_contents:
+                logger.error(f"PDF session not found: {request.session_id}")
+                raise HTTPException(status_code=404, detail="PDF session not found")
+            
+            # Get the chunks for this session
+            chunks = pdf_contents[request.session_id]
+            logger.info(f"Found {len(chunks)} chunks for session {request.session_id}")
+            
+            # Find relevant chunks that fit within our token budget
+            relevant_chunks = find_relevant_chunks(request.prompt, chunks)
+            logger.info(f"Found {len(relevant_chunks)} relevant chunks")
+            
+            if not relevant_chunks:
+                logger.error("No relevant chunks found!")
+                return {"response": "I couldn't find any relevant information in the document to answer your question. Could you please rephrase your question or ask about a different topic?"}
+            
+            # Log the first relevant chunk for debugging
+            if relevant_chunks:
+                logger.info(f"First relevant chunk ({relevant_chunks[0].token_count} tokens): {relevant_chunks[0].text[:200]}")
+            
+            combined_text = "\n\n".join(chunk.text for chunk in relevant_chunks)
+            
+            # System message for PDF mode
+            messages.append({
+                "role": "system",
+                "content": """You are an AI assistant that provides well-structured, comprehensive answers about PDF documents. Follow these formatting guidelines:
 
 1. Start with a brief summary or key point (1-2 sentences)
 2. Use markdown formatting:
@@ -305,40 +284,42 @@ async def chat(request: PromptRequest) -> Dict[str, str]:
 4. End with a brief conclusion or key takeaway
 
 Analyze all provided excerpts thoroughly and create well-organized, easy-to-read responses."""
-        }
-        
-        # Create a context message with the relevant chunks
-        context_message = {
-            "role": "user",
-            "content": f"""Here are relevant excerpts from the document:
+            })
+            
+            # Add context message with PDF content
+            messages.append({
+                "role": "user",
+                "content": f"""Here are relevant excerpts from the document:
 
 {combined_text}
 
 Please provide a detailed, well-structured answer to the following question, incorporating information from all relevant excerpts. Use appropriate markdown formatting and organize your response into clear sections:"""
-        }
+            })
+        else:
+            # System message for regular chat mode
+            messages.append({
+                "role": "system",
+                "content": """You are a helpful AI assistant. Be concise, friendly, and direct in your responses. Use markdown formatting when it helps with clarity:
+- **Bold** for emphasis
+- Lists for multiple points
+- ### Headers for sections
+- `code` for technical terms"""
+            })
         
-        # User's question
-        user_message = {
+        # Add user's question
+        messages.append({
             "role": "user",
             "content": request.prompt
-        }
+        })
         
         # Log message lengths
-        system_tokens = count_tokens(system_message["content"])
-        context_tokens = count_tokens(context_message["content"])
-        user_tokens = count_tokens(user_message["content"])
-        total_tokens = system_tokens + context_tokens + user_tokens
-        
-        logger.info(f"System message tokens: {system_tokens}")
-        logger.info(f"Context message tokens: {context_tokens}")
-        logger.info(f"User message tokens: {user_tokens}")
+        total_tokens = sum(count_tokens(msg["content"]) for msg in messages)
         logger.info(f"Total tokens: {total_tokens}")
-        logger.info(f"User question: {request.prompt}")
         
         # Call Cerebras API
         chat_completion = cerebras_client.chat.completions.create(
             model="llama3.3-70b",
-            messages=[system_message, context_message, user_message],
+            messages=messages,
             temperature=0.2,
             max_completion_tokens=1024
         )
