@@ -344,6 +344,21 @@ export default function ChatInterface({
                   </motion.div>
                 )}
               </AnimatePresence>
+              {isNewChat && (
+                <div className="flex-1 flex flex-col items-center justify-center text-center px-4 animate-slide-down">
+                  <h1 className="text-4xl font-bold mb-4">
+                    <SparklesText>Cerebras Fast Inference</SparklesText>
+                  </h1>
+                  <p className="text-lg text-gray-600 dark:text-gray-400 mb-8">
+                    Chat with Cerebras AI models for fast and efficient inference
+                  </p>
+                  {mode === 'chat' ? (
+                    <></>
+                  ) : (
+                    <></>
+                  )}
+                </div>
+              )}
               <div className={`flex items-end gap-2 ${isNewChat ? 'border rounded-lg shadow-lg p-4' : 'border-t p-4'} border-gray-200`}>
                 <div className="flex items-end w-full gap-2">
                   <FileButton
