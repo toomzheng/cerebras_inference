@@ -1,11 +1,11 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
 import { FileButton } from '@/components/ui/file-button'
-import { FileText, Send, RotateCcw } from 'lucide-react'
+import { FileText, Send } from 'lucide-react'
 import { TooltipWrapper } from '@/components/ui/tooltip'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -19,8 +19,16 @@ type Message = {
 
 type ChatMode = 'chat' | 'pdf'
 
-export default function ChatInterface() {
-  const [messages, setMessages] = useState<Message[]>([])
+interface ChatInterfaceProps {
+  initialMessages?: Message[]
+  onMessagesChange?: (messages: Message[]) => void
+}
+
+export default function ChatInterface({ 
+  initialMessages = [],
+  onMessagesChange
+}: ChatInterfaceProps) {
+  const [messages, setMessages] = useState<Message[]>(initialMessages)
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
@@ -28,14 +36,34 @@ export default function ChatInterface() {
   const [mode, setMode] = useState<ChatMode>('chat')
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const prevMessagesRef = useRef<Message[]>(initialMessages)
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }
+  const scrollToBottom = useCallback(() => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' })
+    }
+  }, [])
 
   useEffect(() => {
     scrollToBottom()
-  }, [messages])
+  }, [messages, scrollToBottom])
+
+  // Update messages when initialMessages changes
+  useEffect(() => {
+    if (JSON.stringify(initialMessages) !== JSON.stringify(prevMessagesRef.current)) {
+      setMessages(initialMessages)
+      prevMessagesRef.current = initialMessages
+    }
+  }, [initialMessages])
+
+  // Notify parent of message changes
+  const updateMessages = useCallback((newMessages: Message[]) => {
+    setMessages(newMessages)
+    if (JSON.stringify(newMessages) !== JSON.stringify(prevMessagesRef.current)) {
+      onMessagesChange?.(newMessages)
+      prevMessagesRef.current = newMessages
+    }
+  }, [onMessagesChange])
 
   const createSession = async () => {
     try {
@@ -52,7 +80,6 @@ export default function ChatInterface() {
   }
 
   useEffect(() => {
-    // Create a session when component mounts
     createSession()
   }, [])
 
@@ -78,13 +105,13 @@ export default function ChatInterface() {
       const data = await response.json()
       setSessionId(data.session_id)
       setUploadProgress(100)
-      setMessages(prev => [...prev, {
+      updateMessages([...messages, {
         role: 'assistant',
         content: `PDF "${file.name}" uploaded successfully! You can now ask questions about its contents.`
       }])
     } catch (error) {
       console.error('Error uploading file:', error)
-      setMessages(prev => [...prev, {
+      updateMessages([...messages, {
         role: 'assistant',
         content: 'Sorry, there was an error uploading the PDF. Please try again.'
       }])
@@ -98,7 +125,7 @@ export default function ChatInterface() {
     if (!input.trim() || isLoading) return
 
     const userMessage = { role: 'user' as const, content: input }
-    setMessages((prev) => [...prev, userMessage])
+    updateMessages([...messages, userMessage])
     setInput('')
     setIsLoading(true)
 
@@ -120,59 +147,28 @@ export default function ChatInterface() {
       }
 
       const data = await response.json()
-      setMessages((prev) => [
-        ...prev,
-        { role: 'assistant' as const, content: data.response },
+      updateMessages([
+        ...messages,
+        userMessage,
+        { role: 'assistant' as const, content: data.response }
       ])
     } catch (error) {
       console.error('Error sending message:', error)
-      setMessages((prev) => [
-        ...prev,
+      updateMessages([
+        ...messages,
+        userMessage,
         {
           role: 'assistant' as const,
           content: 'Sorry, there was an error processing your request.',
-        },
+        }
       ])
     } finally {
       setIsLoading(false)
     }
   }
 
-  const handleNewChat = () => {
-    setMessages([])
-    setSelectedFile(null)
-    setMode('chat')
-    createSession()
-  }
-
   return (
-    <div className="flex h-screen max-w-4xl mx-auto">
-      {/* Side Panel */}
-      <div className="w-12 bg-gray-100 p-2 flex flex-col items-center gap-2">
-        <TooltipWrapper content="Upload PDF">
-          <FileButton
-            accept=".pdf"
-            onFileSelect={handleFileUpload}
-            disabled={isLoading}
-            variant="ghost"
-            size="icon"
-          >
-            <FileText className="h-5 w-5" />
-          </FileButton>
-        </TooltipWrapper>
-        <TooltipWrapper content="New Chat">
-          <Button
-            onClick={handleNewChat}
-            variant="ghost"
-            size="icon"
-            disabled={isLoading}
-          >
-            <RotateCcw className="h-5 w-5" />
-          </Button>
-        </TooltipWrapper>
-      </div>
-
-      {/* Main Chat Area */}
+    <div className="flex h-full">
       <div className="flex-1 flex flex-col p-4">
         {selectedFile && (
           <div className="text-sm text-gray-600 mb-4 flex items-center gap-2">
@@ -185,7 +181,7 @@ export default function ChatInterface() {
           <Progress value={uploadProgress} className="mb-4" />
         )}
 
-        <div className="flex-1 overflow-auto mb-4 space-y-4">
+        <div className="flex-1 overflow-y-auto mb-4 space-y-4">
           {messages.map((message, index) => (
             <div
               key={index}
@@ -205,21 +201,35 @@ export default function ChatInterface() {
           <div ref={messagesEndRef} />
         </div>
 
-        <form onSubmit={handleSubmit} className="flex gap-2">
-          <Input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder={
-              mode === 'pdf'
-                ? 'Ask a question about the PDF...'
-                : 'Type a message...'
-            }
+        <div className="flex gap-2">
+          <FileButton
+            accept=".pdf"
+            onFileSelect={handleFileUpload}
             disabled={isLoading}
-          />
-          <Button type="submit" disabled={isLoading} size="icon">
-            <Send className="h-4 w-4" />
-          </Button>
-        </form>
+            variant="outline"
+            size="icon"
+          >
+            <TooltipWrapper content="Upload PDF">
+              <FileText className="h-5 w-5" />
+            </TooltipWrapper>
+          </FileButton>
+
+          <form onSubmit={handleSubmit} className="flex-1 flex gap-2">
+            <Input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder={
+                mode === 'pdf'
+                  ? 'Ask a question about the PDF...'
+                  : 'Type a message...'
+              }
+              disabled={isLoading}
+            />
+            <Button type="submit" disabled={isLoading} size="icon">
+              <Send className="h-4 w-4" />
+            </Button>
+          </form>
+        </div>
       </div>
     </div>
   )
