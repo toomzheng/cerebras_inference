@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { FileButton } from '@/components/ui/file-button'
@@ -12,8 +12,12 @@ import { Particles } from '@/components/ui/particles'
 import { useTheme } from 'next-themes'
 import { SparklesText } from '@/components/ui/sparkles-text'
 import { motion, AnimatePresence } from 'framer-motion'
+import { Progress } from '@/components/ui/progress'
 
 const API_BASE_URL = 'http://127.0.0.1:8000'
+
+// Set this to true to use mock responses (for development without backend)
+const USE_MOCK_RESPONSES = false
 
 type Message = {
   role: 'user' | 'assistant'
@@ -25,6 +29,30 @@ type ChatMode = 'chat' | 'pdf'
 interface ChatInterfaceProps {
   initialMessages?: Message[]
   onMessagesChange?: (messages: Message[]) => void
+}
+
+const mockResponses = {
+  chat: async (message: string) => {
+    // Simulate network delay
+    await new Promise(resolve => setTimeout(resolve, 1000))
+    return {
+      response: `This is a mock response to: "${message}". The backend server is not running, so I'm providing placeholder responses for development.`
+    }
+  },
+  upload: async (file: File) => {
+    await new Promise(resolve => setTimeout(resolve, 1000))
+    return {
+      success: true,
+      message: `Mock processed file: ${file.name}`,
+      session_id: 'mock-session-' + Date.now()
+    }
+  },
+  createSession: async () => {
+    await new Promise(resolve => setTimeout(resolve, 500))
+    return {
+      session_id: 'mock-session-' + Math.random().toString(36).substring(7)
+    }
+  }
 }
 
 export default function ChatInterface({
@@ -41,6 +69,7 @@ export default function ChatInterface({
   const [isNewChat, setIsNewChat] = useState(initialMessages.length === 0)
   const [isExpanded, setIsExpanded] = useState(false)
   const [currentModel, setCurrentModel] = useState("Llama 3.3 70B")
+  const [error, setError] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const prevMessagesRef = useRef<Message[]>(initialMessages)
   const { theme } = useTheme()
@@ -88,25 +117,28 @@ export default function ChatInterface({
     }
   }, [onMessagesChange])
 
-  const createSession = async () => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/create-session`, {
-        method: 'POST',
-      })
-      const data = await response.json()
-      if (data.session_id) {
-        setSessionId(data.session_id)
-      }
-    } catch (error) {
-      console.error('Error creating session:', error)
-    }
-  }
-
   useEffect(() => {
-    createSession()
-  }, [])
+    const initializeChat = async () => {
+      try {
+        const response = USE_MOCK_RESPONSES
+          ? await mockResponses.createSession()
+          : await fetch(`${API_BASE_URL}/api/create-session`, {
+              method: 'POST',
+            }).then(res => res.json())
+
+        setSessionId(response.session_id)
+      } catch (error) {
+        console.warn('Error creating session, continuing without one:', error)
+      }
+    }
+
+    if (!sessionId) {
+      initializeChat()
+    }
+  }, [sessionId])
 
   const handleFileUpload = async (file: File) => {
+    setError(null)
     setSelectedFile(file)
     setMode('pdf')
     setUploadProgress(0)
@@ -115,30 +147,49 @@ export default function ChatInterface({
     formData.append('file', file)
 
     try {
+      if (USE_MOCK_RESPONSES) {
+        const response = await mockResponses.upload(file)
+        setUploadProgress(100)
+        setSessionId(response.session_id)
+        updateMessages([
+          ...messages,
+          {
+            role: 'assistant',
+            content: response.message
+          }
+        ])
+        return
+      }
+
       const response = await fetch(`${API_BASE_URL}/api/upload-pdf`, {
         method: 'POST',
         body: formData,
       })
 
+      const data = await response.json()
       if (!response.ok) {
-        throw new Error('Upload failed')
+        throw new Error(data.message || 'Upload failed')
       }
 
-      const data = await response.json()
       setUploadProgress(100)
       setSessionId(data.session_id)
+      updateMessages([
+        ...messages,
+        {
+          role: 'assistant',
+          content: `I've processed ${file.name}. What would you like to know about it?`
+        }
+      ])
     } catch (error) {
-      console.error('Error uploading file:', error)
-      setSelectedFile(null)
+      setError(error instanceof Error ? error.message : 'Failed to upload file')
       setMode('chat')
+    } finally {
+      setSelectedFile(null)
     }
   }
 
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInput(e.target.value)
-    // Reset height to auto to properly calculate new height
-    e.target.style.height = 'auto'
-    // Set new height based on scrollHeight
     e.target.style.height = `${e.target.scrollHeight}px`
   }
 
@@ -154,12 +205,23 @@ export default function ChatInterface({
     if (!input.trim() || isLoading) return
 
     setIsNewChat(false)
-    const userMessage = { role: 'user' as const, content: input }
+    const userMessage = { role: 'user' as const, content: input.trim() }
     updateMessages([...messages, userMessage])
     setInput('')
     setIsLoading(true)
+    setError(null)
 
     try {
+      if (USE_MOCK_RESPONSES) {
+        const data = await mockResponses.chat(input)
+        updateMessages([
+          ...messages,
+          userMessage,
+          { role: 'assistant' as const, content: data.response }
+        ])
+        return
+      }
+
       const response = await fetch(`${API_BASE_URL}/api/chat`, {
         method: 'POST',
         headers: {
@@ -193,6 +255,7 @@ export default function ChatInterface({
           content: 'Sorry, there was an error processing your request.',
         }
       ])
+      setError('Failed to get response. Please try again.')
     } finally {
       setIsLoading(false)
     }
@@ -284,38 +347,43 @@ export default function ChatInterface({
                 )}
               </AnimatePresence>
               <div className={`flex items-end gap-2 ${isNewChat ? 'border rounded-lg shadow-lg p-4' : 'border-t p-4'} border-gray-200`}>
-                <FileButton
-                  onChange={handleFileUpload}
-                  accept=".pdf"
-                  disabled={isLoading}
-                  variant="outline"
-                  size="sm"
-                >
-                  <TooltipWrapper content="Upload PDF">
-                    <FileText className="h-5 w-5" />
-                  </TooltipWrapper>
-                </FileButton>
-
-                <div className="flex-1 relative">
-                  <Textarea
-                    value={input}
-                    onChange={handleInputChange}
-                    onKeyDown={handleKeyDown}
-                    placeholder="Type a message to Cerebras..."
-                    className="resize-none overflow-hidden min-h-[40px] max-h-[200px] pr-12"
+                <div className="flex items-end w-full gap-2">
+                  <FileButton
+                    onChange={handleFileUpload}
+                    accept=".pdf"
                     disabled={isLoading}
-                    rows={1}
-                  />
-                  <Button
+                    variant="outline"
                     size="sm"
-                    className="absolute right-2 top-1/2 -translate-y-1/2 h-6 w-6"
-                    disabled={!input.trim() || isLoading}
-                    onClick={handleSubmit}
                   >
-                    <Send className="h-3 w-3" />
-                  </Button>
+                    <TooltipWrapper content="Upload PDF">
+                      <FileText className="h-5 w-5" />
+                    </TooltipWrapper>
+                  </FileButton>
+
+                  <div className="flex-1 relative">
+                    <Textarea
+                      value={input}
+                      onChange={handleInputChange}
+                      onKeyDown={handleKeyDown}
+                      placeholder="Type a message to Cerebras..."
+                      className="resize-none overflow-hidden min-h-[40px] max-h-[200px] pr-24 w-full"
+                      disabled={isLoading}
+                      rows={1}
+                    />
+                    <Button
+                      size="sm"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 bg-black text-white hover:bg-gray-800 px-4 py-2 rounded-md"
+                      disabled={!input.trim() || isLoading}
+                      onClick={handleSubmit}
+                    >
+                      <Send className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
               </div>
+              {error && (
+                <div className="text-sm text-red-500 mt-2">{error}</div>
+              )}
             </div>
           </div>
         </div>

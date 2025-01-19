@@ -4,13 +4,13 @@ import React, { useRef } from 'react'
 import { Button, type ButtonProps } from './button'
 import { cn } from '@/lib/utils'
 
-interface FileButtonProps extends ButtonProps {
-  onFileSelect: (file: File) => void
+interface FileButtonProps extends Omit<ButtonProps, 'onChange'> {
+  onChange: (file: File) => void
   accept?: string
 }
 
 export function FileButton({
-  onFileSelect,
+  onChange,
   accept = '*',
   className,
   children,
@@ -28,7 +28,7 @@ export function FileButton({
     console.log('File selected:', event.target.files)
     const file = event.target.files?.[0]
     if (file) {
-      onFileSelect(file)
+      onChange(file)
     }
     // Reset the input so the same file can be selected again
     event.target.value = ''
