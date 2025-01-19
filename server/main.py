@@ -36,7 +36,7 @@ def split_into_sentences(text: str) -> List[str]:
     sentences = re.split(pattern, text)
     return [s.strip() for s in sentences if s.strip()]
 
-def create_chunks_with_overlap(sentences: List[str], max_tokens: int = 2000, overlap_sentences: int = 2) -> List[TextChunk]:
+def create_chunks_with_overlap(sentences: List[str], max_tokens: int = 4000, overlap_sentences: int = 5) -> List[TextChunk]:
     """Create chunks of text that respect token limits with sentence overlap."""
     chunks = []
     current_chunk = []
@@ -51,7 +51,7 @@ def create_chunks_with_overlap(sentences: List[str], max_tokens: int = 2000, ove
             chunk_text = " ".join(current_chunk)
             chunks.append(TextChunk(text=chunk_text, token_count=current_token_count))
             
-            # Start new chunk with overlap
+            # Start new chunk with more overlap for better context
             overlap_start = max(0, len(current_chunk) - overlap_sentences)
             current_chunk = current_chunk[overlap_start:]
             current_token_count = count_tokens(" ".join(current_chunk))
@@ -66,43 +66,106 @@ def create_chunks_with_overlap(sentences: List[str], max_tokens: int = 2000, ove
     
     return chunks
 
-def find_relevant_chunks(query: str, chunks: List[TextChunk], max_total_tokens: int = 6000) -> List[TextChunk]:
+def preprocess_text(text: str) -> List[str]:
+    """Clean and normalize text, returning list of words."""
+    # Convert to lowercase and split into words
+    words = re.findall(r'\w+', text.lower())
+    # Remove common words that don't add meaning
+    stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by'}
+    return [w for w in words if w not in stop_words]
+
+def calculate_chunk_score(query_words: List[str], chunk_words: List[str]) -> float:
+    """Calculate relevance score between query and chunk using TF-IDF-like scoring."""
+    # Convert to sets for intersection
+    query_set = set(query_words)
+    chunk_set = set(chunk_words)
+    
+    # Calculate word overlap
+    matching_words = query_set.intersection(chunk_set)
+    
+    if not matching_words:
+        return 0.0
+    
+    # Count word frequencies in chunk
+    chunk_freq = {}
+    for word in chunk_words:
+        chunk_freq[word] = chunk_freq.get(word, 0) + 1
+    
+    # Calculate score based on:
+    # 1. Number of matching unique words (coverage)
+    # 2. Frequency of matching words in chunk (relevance)
+    # 3. Proximity of matches to start of chunk (position bias)
+    coverage_score = len(matching_words) / len(query_set)
+    
+    relevance_score = sum(chunk_freq[word] for word in matching_words) / len(chunk_words)
+    
+    # Find earliest position of matching words
+    first_positions = []
+    for word in matching_words:
+        try:
+            pos = chunk_words.index(word)
+            first_positions.append(pos)
+        except ValueError:
+            continue
+    
+    position_score = 1.0
+    if first_positions:
+        # Earlier positions get higher scores
+        min_pos = min(first_positions)
+        position_score = 1.0 / (1.0 + min_pos / 100)
+    
+    # Combine scores with weights
+    final_score = (0.4 * coverage_score + 
+                  0.4 * relevance_score + 
+                  0.2 * position_score)
+    
+    return final_score
+
+def find_relevant_chunks(query: str, chunks: List[TextChunk], max_total_tokens: int = 7000) -> List[TextChunk]:
     """Find the most relevant chunks that fit within the token limit."""
-    # Score chunks based on word overlap (we can make this more sophisticated later)
-    query_words = set(re.findall(r'\w+', query.lower()))
-    logger.info(f"Query words: {query_words}")
+    # Preprocess query and chunks
+    query_words = preprocess_text(query)
+    logger.info(f"Preprocessed query words: {query_words}")
     
     scored_chunks = []
     
     for i, chunk in enumerate(chunks):
-        chunk_words = set(re.findall(r'\w+', chunk.text.lower()))
-        score = len(query_words.intersection(chunk_words))
-        logger.info(f"Chunk {i} score: {score} (words: {len(chunk_words)})")
-        # Always add the chunk with its score
+        chunk_words = preprocess_text(chunk.text)
+        score = calculate_chunk_score(query_words, chunk_words)
+        logger.info(f"Chunk {i} score: {score:.4f} (words: {len(chunk_words)})")
         scored_chunks.append((score, chunk))
     
-    # Sort by score only (not the TextChunk objects)
+    # Sort by score
     scored_chunks.sort(key=lambda x: x[0], reverse=True)
-    logger.info(f"Top scores: {[score for score, _ in scored_chunks[:3]]}")
+    logger.info(f"Top scores: {[f'{score:.4f}' for score, _ in scored_chunks[:3]]}")
     
     # Select chunks that fit within the token limit
     selected_chunks = []
     total_tokens = 0
+    min_score_threshold = 0.01  # Much lower threshold to include more context
     
+    # First pass: include highly relevant chunks
     for score, chunk in scored_chunks:
-        if total_tokens + chunk.token_count <= max_total_tokens:
+        if score >= 0.1 and total_tokens + chunk.token_count <= max_total_tokens:
             selected_chunks.append(chunk)
             total_tokens += chunk.token_count
-            logger.info(f"Selected chunk with score {score}, tokens: {chunk.token_count}, total tokens now: {total_tokens}")
-        else:
-            logger.info(f"Stopping chunk selection at {total_tokens} tokens")
-            break
+            logger.info(f"Selected high-relevance chunk with score {score:.4f}, tokens: {chunk.token_count}, total tokens: {total_tokens}")
+    
+    # Second pass: include surrounding context with lower relevance
+    for score, chunk in scored_chunks:
+        if score >= min_score_threshold and chunk not in selected_chunks:
+            if total_tokens + chunk.token_count <= max_total_tokens:
+                selected_chunks.append(chunk)
+                total_tokens += chunk.token_count
+                logger.info(f"Selected context chunk with score {score:.4f}, tokens: {chunk.token_count}, total tokens: {total_tokens}")
+            else:
+                logger.info(f"Stopping chunk selection at {total_tokens} tokens")
+                break
     
     if not selected_chunks:
-        logger.info("No chunks fit within token limit, using first chunk truncated")
-        first_chunk = chunks[0]
-        # If we can't fit any chunks, at least return the first one
-        return [first_chunk]
+        logger.info("No chunks selected, using first two chunks")
+        # Take first two chunks or all if less than two
+        return chunks[:min(2, len(chunks))]
     
     return selected_chunks
 
@@ -226,13 +289,13 @@ async def chat(request: PromptRequest) -> Dict[str, str]:
         # Construct a shorter system message
         system_message = {
             "role": "system",
-            "content": "You are an AI assistant that answers questions about PDF documents. Base answers only on the provided excerpts."
+            "content": "You are an AI assistant that answers questions about PDF documents. Analyze all the provided excerpts thoroughly and provide comprehensive answers that incorporate information from multiple sections when relevant."
         }
         
         # Create a context message with the relevant chunks
         context_message = {
             "role": "user",
-            "content": f"Here are relevant excerpts from the document:\n\n{combined_text}\n\nPlease answer the following question based only on these excerpts."
+            "content": f"Here are relevant excerpts from the document:\n\n{combined_text}\n\nPlease provide a detailed answer to the following question, incorporating information from all relevant excerpts:"
         }
         
         # User's question
