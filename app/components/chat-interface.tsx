@@ -10,6 +10,8 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Particles } from '@/components/ui/particles'
 import { useTheme } from 'next-themes'
+import { SparklesText } from '@/components/ui/sparkles-text'
+import { motion, AnimatePresence } from 'framer-motion'
 
 const API_BASE_URL = 'http://127.0.0.1:8000'
 
@@ -25,7 +27,7 @@ interface ChatInterfaceProps {
   onMessagesChange?: (messages: Message[]) => void
 }
 
-export default function ChatInterface({ 
+export default function ChatInterface({
   initialMessages = [],
   onMessagesChange
 }: ChatInterfaceProps) {
@@ -122,7 +124,9 @@ export default function ChatInterface({
         throw new Error('Upload failed')
       }
 
+      const data = await response.json()
       setUploadProgress(100)
+      setSessionId(data.session_id)
     } catch (error) {
       console.error('Error uploading file:', error)
       setSelectedFile(null)
@@ -169,7 +173,8 @@ export default function ChatInterface({
       })
 
       if (!response.ok) {
-        throw new Error('Chat request failed')
+        const error = await response.json()
+        throw new Error(error.detail || 'Chat request failed')
       }
 
       const data = await response.json()
@@ -233,11 +238,10 @@ export default function ChatInterface({
                 className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
               >
                 <div
-                  className={`p-4 rounded-lg backdrop-blur-sm max-w-[80%] ${
-                    message.role === 'user'
+                  className={`p-4 rounded-lg backdrop-blur-sm max-w-[80%] ${message.role === 'user'
                       ? 'bg-orange-200/90 animate-fade'
                       : 'bg-gray-100/80 animate-fade'
-                  }`}
+                    }`}
                 >
                   <div className="prose prose-sm max-w-none dark:prose-invert">
                     <ReactMarkdown remarkPlugins={[remarkGfm]}>
@@ -252,12 +256,10 @@ export default function ChatInterface({
           </div>
         </div>
 
-        <div className={`transition-all duration-500 ease-in-out ${
-          isNewChat ? 'flex-1 flex items-center justify-center' : 'flex justify-center animate-slide-down'
-        }`}>
-          <div className={`flex flex-col gap-2 w-full ${
-            isExpanded ? 'max-w-5xl' : 'max-w-2xl'
-          } transition-all duration-500`}>
+        <div className={`transition-all duration-500 ease-in-out ${isNewChat ? 'flex-1 flex items-center justify-center' : 'flex justify-center animate-slide-down'
+          }`}>
+          <div className={`flex flex-col gap-2 w-full ${isExpanded ? 'max-w-5xl' : 'max-w-2xl'
+            } transition-all duration-500`}>
             {selectedFile && (
               <div className="flex items-center gap-2 text-sm text-gray-600 px-4">
                 <FileText className="h-4 w-4" />
@@ -265,43 +267,54 @@ export default function ChatInterface({
                 <Check className="h-4 w-4 text-green-500 animate-fade" />
               </div>
             )}
-            <div className={`flex items-end gap-2 p-4 ${
-              isNewChat ? 'border rounded-lg shadow-lg' : 'border-t'
-            } border-gray-200`}>
-              <FileButton
-                accept=".pdf"
-                onFileSelect={handleFileUpload}
-                disabled={isLoading}
-                variant="outline"
-                size="sm"
-              >
-                <TooltipWrapper content="Upload PDF">
-                  <FileText className="h-5 w-5" />
-                </TooltipWrapper>
-              </FileButton>
-
-              <div className="flex-1 relative">
-                <Textarea
-                  value={input}
-                  onChange={handleInputChange}
-                  onKeyDown={handleKeyDown}
-                  placeholder={
-                    mode === 'pdf'
-                      ? 'Ask a question about the PDF...'
-                      : 'Type a message...'
-                  }
-                  className="resize-none overflow-hidden min-h-[40px] max-h-[200px] pr-12"
+            <div className="flex flex-col p-4">
+              <AnimatePresence>
+                {messages.length === 0 && (
+                  <motion.div
+                    initial={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -100 }}
+                    transition={{ duration: 0.5, ease: "easeOut" }}
+                  >
+                    <SparklesText 
+                      text="Cerebras Inference" 
+                      className="text-3xl text-center mb-6"
+                      sparklesCount={7}
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+              <div className={`flex items-end gap-2 ${isNewChat ? 'border rounded-lg shadow-lg p-4' : 'border-t p-4'} border-gray-200`}>
+                <FileButton
+                  onChange={handleFileUpload}
+                  accept=".pdf"
                   disabled={isLoading}
-                  rows={1}
-                />
-                <Button
+                  variant="outline"
                   size="sm"
-                  className="absolute right-2 top-1/2 -translate-y-1/2 h-6 w-6"
-                  disabled={!input.trim() || isLoading}
-                  onClick={handleSubmit}
                 >
-                  <Send className="h-3 w-3" />
-                </Button>
+                  <TooltipWrapper content="Upload PDF">
+                    <FileText className="h-5 w-5" />
+                  </TooltipWrapper>
+                </FileButton>
+
+                <div className="flex-1 relative">
+                  <Textarea
+                    value={input}
+                    onChange={handleInputChange}
+                    onKeyDown={handleKeyDown}
+                    placeholder="Type a message to Cerebras..."
+                    className="resize-none overflow-hidden min-h-[40px] max-h-[200px] pr-12"
+                    disabled={isLoading}
+                    rows={1}
+                  />
+                  <Button
+                    size="sm"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 h-6 w-6"
+                    disabled={!input.trim() || isLoading}
+                    onClick={handleSubmit}
+                  >
+                    <Send className="h-3 w-3" />
+                  </Button>
+                </div>
               </div>
             </div>
           </div>

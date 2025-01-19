@@ -63,6 +63,25 @@ export default function RootPage() {
     })
   }, [currentSessionId])
 
+  const handleDeleteSession = useCallback((sessionId: string) => {
+    // Filter out the deleted session
+    setSessions(prev => prev.filter(s => s.id !== sessionId))
+    
+    // If the deleted session was the current one, switch to a new session
+    if (currentSessionId === sessionId) {
+      const remainingSessions = sessions.filter(s => s.id !== sessionId)
+      if (remainingSessions.length > 0) {
+        setCurrentSessionId(remainingSessions[0].id)
+      } else {
+        handleNewSession()
+      }
+    }
+    
+    // Save updated sessions to localStorage
+    const updatedSessions = sessions.filter(s => s.id !== sessionId)
+    localStorage.setItem('chatSessions', JSON.stringify(updatedSessions))
+  }, [sessions, currentSessionId, handleNewSession])
+
   // Create initial session if none exist
   useEffect(() => {
     if (!isInitialMount.current && sessions.length === 0) {
@@ -74,20 +93,23 @@ export default function RootPage() {
 
   return (
     <div className="flex h-screen">
-      <ChatSessions
-        sessions={sessions}
-        currentSessionId={currentSessionId}
-        onSessionSelect={handleSessionSelect}
-        onNewSession={handleNewSession}
-      />
-      <div className="flex-1">
-        {currentSession && (
-          <ChatInterface
-            key={currentSessionId}
-            initialMessages={currentSession.messages}
-            onMessagesChange={handleMessagesUpdate}
-          />
-        )}
+      <div className="flex w-full">
+        <ChatSessions
+          sessions={sessions}
+          currentSessionId={currentSessionId}
+          onSessionSelect={handleSessionSelect}
+          onNewSession={handleNewSession}
+          onDeleteSession={handleDeleteSession}
+        />
+        <div className="flex-1">
+          {currentSession && (
+            <ChatInterface
+              key={currentSessionId}
+              initialMessages={currentSession.messages}
+              onMessagesChange={handleMessagesUpdate}
+            />
+          )}
+        </div>
       </div>
     </div>
   )

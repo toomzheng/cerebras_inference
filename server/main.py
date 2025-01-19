@@ -137,6 +137,15 @@ load_dotenv()
 
 app = FastAPI()
 
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  # Frontend URL
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Initialize Cerebras client
 api_key = os.environ.get("CEREBRAS_API_KEY")
 if not api_key:
@@ -150,16 +159,7 @@ except Exception as e:
     logger.error(f"Failed to initialize Cerebras client: {str(e)}")
     raise
 
-# Configure CORS for development
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# In-memory storage for PDF content
+# Dictionary to store PDF contents for each session
 pdf_contents: Dict[str, List[TextChunk]] = {}
 
 class PromptRequest(BaseModel):
