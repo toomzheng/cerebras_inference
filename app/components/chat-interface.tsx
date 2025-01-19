@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import ReactMarkdown from 'react-markdown';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -103,7 +104,13 @@ export function ChatInterface({ sessionId }: ChatInterfaceProps) {
                     : 'bg-gray-100 mr-auto max-w-[80%]'
               }`}
             >
-              {message.content}
+              {message.role === 'assistant' && !message.content.startsWith('Error:') ? (
+                <div className="prose prose-sm max-w-none dark:prose-invert">
+                  <ReactMarkdown>{message.content}</ReactMarkdown>
+                </div>
+              ) : (
+                message.content
+              )}
             </div>
           ))}
           {messages.length === 0 && (

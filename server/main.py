@@ -286,16 +286,35 @@ async def chat(request: PromptRequest) -> Dict[str, str]:
         total_tokens = sum(chunk.token_count for chunk in relevant_chunks)
         logger.info(f"Selected {len(relevant_chunks)} relevant chunks, total tokens: {total_tokens}")
         
-        # Construct a shorter system message
+        # Construct a detailed system message with formatting instructions
         system_message = {
             "role": "system",
-            "content": "You are an AI assistant that answers questions about PDF documents. Analyze all the provided excerpts thoroughly and provide comprehensive answers that incorporate information from multiple sections when relevant."
+            "content": """You are an AI assistant that provides well-structured, comprehensive answers about PDF documents. Follow these formatting guidelines:
+
+1. Start with a brief summary or key point (1-2 sentences)
+2. Use markdown formatting:
+   - **Bold** for important concepts
+   - Organize information into sections with ### headings
+   - Use bullet points or numbered lists for multiple items
+   - Use `code blocks` for technical terms or citations
+3. Structure longer responses into clear sections:
+   - Main Points/Summary
+   - Details/Analysis
+   - Examples/Evidence (with quotes when relevant)
+   - Additional Context (if applicable)
+4. End with a brief conclusion or key takeaway
+
+Analyze all provided excerpts thoroughly and create well-organized, easy-to-read responses."""
         }
         
         # Create a context message with the relevant chunks
         context_message = {
             "role": "user",
-            "content": f"Here are relevant excerpts from the document:\n\n{combined_text}\n\nPlease provide a detailed answer to the following question, incorporating information from all relevant excerpts:"
+            "content": f"""Here are relevant excerpts from the document:
+
+{combined_text}
+
+Please provide a detailed, well-structured answer to the following question, incorporating information from all relevant excerpts. Use appropriate markdown formatting and organize your response into clear sections:"""
         }
         
         # User's question
