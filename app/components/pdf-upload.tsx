@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import { API_BASE_URL } from '../config';
 
 export function PDFUpload() {
   const [file, setFile] = useState<File | null>(null);
@@ -33,7 +34,7 @@ export function PDFUpload() {
     formData.append('file', file);
 
     try {
-      const response = await fetch('http://localhost:8000/api/upload-pdf', {
+      const response = await fetch(`${API_BASE_URL}/api/upload-pdf`, {
         method: 'POST',
         body: formData,
       });

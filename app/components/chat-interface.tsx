@@ -13,8 +13,7 @@ import { useTheme } from 'next-themes'
 import { SparklesText } from '@/components/ui/sparkles-text'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Progress } from '@/components/ui/progress'
-
-const API_BASE_URL = 'http://127.0.0.1:8000'
+import { API_BASE_URL } from '../config'
 
 // Set this to true to use mock responses (for development without backend)
 const USE_MOCK_RESPONSES = false
